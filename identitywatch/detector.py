@@ -1,5 +1,5 @@
 """Causal authentication features and unsupervised Isolation Forest scoring."""
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 import ipaddress
 import math
@@ -74,6 +74,7 @@ class FeatureState:
         self.profiles = defaultdict(Profile)
         self.user_failures = defaultdict(deque)
         self.source_failures = defaultdict(deque)
+        self.source_user_counts = defaultdict(Counter)
 
     def transform(self, events, learn_profiles=False):
         rows = []
@@ -81,15 +82,20 @@ class FeatureState:
             p = self.profiles[event.user]
             user_q = self.user_failures[event.user]
             source_q = self.source_failures[event.ip]
+            counts = self.source_user_counts[event.ip]
             cutoff = event.timestamp - pd.Timedelta(minutes=10)
             while user_q and user_q[0] < cutoff:
                 user_q.popleft()
             while source_q and source_q[0][0] < cutoff:
-                source_q.popleft()
+                _, expired_user = source_q.popleft()
+                counts[expired_user] -= 1
+                if counts[expired_user] == 0:
+                    del counts[expired_user]
             failed = int(event.outcome == "failure")
             if failed:
                 user_q.append(event.timestamp)
                 source_q.append((event.timestamp, event.user))
+                counts[event.user] += 1
             rows.append({
                 "new_ip": int(bool(p.count) and event.ip not in p.ips),
                 "new_country": int(bool(p.count) and event.country not in p.countries),
@@ -97,7 +103,7 @@ class FeatureState:
                 "hour_distance": p.distance(event.timestamp),
                 "user_failures_10m": len(user_q),
                 "source_failures_10m": len(source_q),
-                "source_users_10m": len({u for _, u in source_q}),
+                "source_users_10m": len(counts),
                 "failed": failed,
                 "cold_start": int(not p.count),
             })
