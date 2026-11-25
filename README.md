@@ -70,3 +70,18 @@ For a production pilot, add authenticated ingestion from Entra ID or another ide
 - `identitywatch/__main__.py`: CLI
 - `app.py`: Streamlit dashboard
 - `tests/`: regression tests
+
+## Extended identity investigation
+
+The advanced engine adds eight behavioural indicators: success after repeated failures, ten-minute login bursts, dormant-account returns, new weekdays, new IPv4 /24 or IPv6 /64 network prefixes, unfamiliar shared devices, rapid country changes and accounts without a successful baseline. The first, second, sixth and seventh are independent alert rules; the remaining four are contextual evidence, not standalone alerts. The engine does not alter the Isolation Forest score.
+
+The dashboard now supports configurable behavioural thresholds, stable per-event IDs, approximate travel speed, ATT&CK technique references (heuristic mappings, not confirmed attacks), account timelines, severity and indicator filters, incident grouping, session-local dispositions and notes, incident export, five entity pivots, UTC weekday/hour activity, drift comparisons, a four-way evaluation with confusion counts, JSON exports and keyed pseudonymisation.
+
+Rapid country change is an approximate heuristic based on nine country centroids, not real geolocation. Device-sharing counts cover successful events across the analysed baseline and evaluation history. Dormancy measures inactivity since the preceding event. No evaluation event updates trusted baseline networks, weekdays or device memberships. Tied timestamps follow input order. Event IDs distinguish duplicate rows by occurrence number.
+
+```bash
+python -m identitywatch --demo --format json --output demo.json
+python -m identitywatch --demo --burst 12 --failures 4 --output tuned.csv
+```
+
+The combined alert includes ML, original rules and advanced alert rules. Review status is session-local and is lost when the browser session closes; export it if needed. Pseudonymisation protects selected direct identifiers using a session key, but timestamps, country and other potentially identifying metadata remain. Do not treat it as anonymous data. The system remains local-first, with no real identity provider integration or automatic account changes.
