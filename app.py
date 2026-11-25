@@ -40,14 +40,22 @@ with st.sidebar:
             st.stop()
 
 try:
-    if mode == "Synthetic demo":
-        baseline, events = make_demo()
-    else:
-        baseline = pd.read_csv(history, nrows=100001, dtype=str)
-        events = pd.read_csv(incoming, nrows=100001, dtype=str)
-    with st.spinner("Learning historical behaviour and scoring new events..."):
-        detector = Detector(contamination).fit(baseline)
-        result = enrich(detector.baseline, detector.score(events), policy)
+    fingerprints = ("demo-v1",) if mode == "Synthetic demo" else (
+        hashlib.sha256(history.getvalue()).hexdigest(), hashlib.sha256(incoming.getvalue()).hexdigest())
+    analysis_key = (fingerprints, contamination, policy)
+    # Cache only the current analysis in this session, never in a shared global cache.
+    if st.session_state.get("analysis_key") != analysis_key:
+        if mode == "Synthetic demo":
+            baseline, events = make_demo()
+        else:
+            baseline = pd.read_csv(history, nrows=100001, dtype=str)
+            events = pd.read_csv(incoming, nrows=100001, dtype=str)
+        with st.spinner("Learning historical behaviour and scoring new events..."):
+            detector = Detector(contamination).fit(baseline)
+            result = enrich(detector.baseline, detector.score(events), policy)
+        st.session_state["analysis_data"] = (baseline, events, detector, result)
+        st.session_state["analysis_key"] = analysis_key
+    baseline, events, detector, result = st.session_state["analysis_data"]
 except (ValueError, OSError, UnicodeError) as exc:
     st.error(f"Unable to analyse the data: {exc}")
     st.stop()
@@ -79,7 +87,9 @@ with overview:
     st.subheader("UTC weekday and hour activity")
     hours = heatmap(result)
     hours.index = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    st.dataframe(hours, use_container_width=True)
+    maximum = max(1, int(hours.to_numpy().max()))
+    styled = hours.style.map(lambda v: f"background-color: rgba(31, 151, 171, {0.08 + 0.7*v/maximum:.3f})")
+    st.dataframe(styled, use_container_width=True)
     st.subheader("Risk distribution")
     hist = result.groupby(pd.cut(result.baseline_percentile, bins=[-1, 50, 75, 90, 95, 100], include_lowest=True), observed=False).size()
     hist.index = hist.index.astype(str)
@@ -128,7 +138,7 @@ with casework:
     cases = incidents(result, gap)
     st.metric("Incident groups", len(cases))
     # State is session-local and keyed by the analysed event set and grouping policy.
-    dataset = hashlib.sha256((",".join(result.event_id) + f":{gap}").encode()).hexdigest()
+    dataset = hashlib.sha256((repr(analysis_key) + f":{gap}").encode()).hexdigest()
     if st.session_state.get("case_dataset") != dataset:
         st.session_state["case_dataset"] = dataset
         st.session_state["case_notes"] = {}
@@ -166,11 +176,11 @@ with methodology:
     st.dataframe(drift(detector.baseline, result), hide_index=True, use_container_width=True)
     st.caption("Total variation distance ranges from 0 to 1. Values of 0.2 or more warrant review, not automatic retraining.")
     st.write("Baseline events:", len(baseline))
-    st.write("ML alerts:", int(result.ml_anomaly.sum()), "| Rule alerts:", int(result.rule_alert.sum()))
+    st.write("ML alerts:", int(result.ml_anomaly.sum()), "| Original rule alerts:", int(result.rule_alert.sum()), "| Advanced rule alerts:", int(result.advanced_alert.sum()))
     if mode == "Synthetic demo":
         st.subheader("Synthetic holdout evaluation")
         actual = events.sort_values("timestamp", kind="stable").scenario.ne("normal").to_numpy()
-        for name, predicted in [("ML only", result.ml_anomaly), ("Rules only", result.rule_alert), ("Combined", result.alert)]:
+        for name, predicted in [("ML only", result.ml_anomaly), ("Rules only", result.rule_alert), ("Combined (all rules + ML)", result.combined_alert)]:
             st.write(name, {"precision": round(precision_score(actual, predicted, zero_division=0), 3),
                 "recall": round(recall_score(actual, predicted, zero_division=0), 3),
                 "F1": round(f1_score(actual, predicted, zero_division=0), 3)})
