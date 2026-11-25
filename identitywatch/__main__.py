@@ -20,7 +20,7 @@ def main():
         parser.error("Supply both CSV paths or --demo.")
     try:
         baseline, events = make_demo() if args.demo else (
-            pd.read_csv(args.baseline, nrows=100001), pd.read_csv(args.events, nrows=100001))
+            pd.read_csv(args.baseline, nrows=100001, dtype=str), pd.read_csv(args.events, nrows=100001, dtype=str))
         result = Detector(args.contamination).fit(baseline).score(events)
         with args.output.open("x", encoding="utf-8", newline="") as handle:
             handle.write(safe_csv(result))
